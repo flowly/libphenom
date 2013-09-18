@@ -405,11 +405,10 @@ static void connected_sock(ph_socket_t s, const ph_sockaddr_t *addr,
     if (!sock) {
       status = ENOMEM;
     }
-  } else {
-    //close socket when connect failed
-    if (s > 0) {
-      close(s);
-    }
+  }
+
+  if (status != 0 && rac->s != -1) {
+    close(rac->s);
   }
 
   calc_elapsed(rac);
