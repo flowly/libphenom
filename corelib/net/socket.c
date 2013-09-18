@@ -228,7 +228,7 @@ void ph_socket_connect(ph_socket_t s, const ph_sockaddr_t *addr,
   timersub(&done, &job->start, &done);
 
   //close socket when connect failed
-  if (job->s > 0) {
+  if (job->s > 0 && res < 0) {
     close(job->s);
   }
   // Immediate result
