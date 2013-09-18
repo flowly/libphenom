@@ -227,10 +227,6 @@ void ph_socket_connect(ph_socket_t s, const ph_sockaddr_t *addr,
   done = ph_time_now();
   timersub(&done, &job->start, &done);
 
-  //close socket when connect failed
-  if (job->s > 0 && res < 0) {
-    close(job->s);
-  }
   // Immediate result
   func(s, addr, res == 0 ? 0 : errno, &done, arg);
   ph_job_free(&job->job);
@@ -408,6 +404,11 @@ static void connected_sock(ph_socket_t s, const ph_sockaddr_t *addr,
 
     if (!sock) {
       status = ENOMEM;
+    }
+  } else {
+    //close socket when connect failed
+    if (s > 0) {
+      close(s);
     }
   }
 
