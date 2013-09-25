@@ -204,6 +204,11 @@ done:
     int len;
     uint32_t i;
 
+    if (sock->job.data) {
+      // We've already served one; call it done
+      goto done;
+    }
+
     buf = ph_sock_read_line(sock);
     if (!buf) {
       return;
@@ -225,6 +230,8 @@ done:
       funcs[i].func(sock);
       break;
     }
+
+    ph_buf_delref(buf);
   }
 }
 

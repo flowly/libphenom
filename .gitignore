@@ -23,7 +23,11 @@ include/phenom_build_config.h.in
 include/phenom_build_config.h
 compile
 tests/*.t
+tests/*.t.*
 tests/bench/*.t
+tests/bench/*.t.*
+tests/bench/*.png
+*.png
 .dirstamp
 *.a
 *.rpm
@@ -33,3 +37,6 @@ tests/bench/*.t
 core
 docs/declmap.js
 libphenom.pc
+test-driver
+test-suite.log
+examples/echo

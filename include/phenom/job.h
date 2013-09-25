@@ -1,5 +1,5 @@
 /*
- * Copyright 2013 Facebook, Inc.
+ * Copyright 2013-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,23 +66,32 @@ struct ph_job_def {
   void (*dtor)(ph_job_t *job);
 };
 
+/** Job
+ * Use either ph_job_alloc() to allocate and initialize, or allocate it yourself
+ * and use ph_job_init() to initialize the fields.
+ */
 struct ph_job {
-  /* data associated with job */
+  // data associated with job
   void *data;
+  // the callback to run when the job is dispatched
   ph_job_func_t callback;
-  /* deferred apply list */
+  // deferred apply list
   PH_STAILQ_ENTRY(ph_job) q_ent;
-
-  /* for PH_RUNCLASS_NBIO, trigger mask */
+  bool in_apply;
+  // for PH_RUNCLASS_NBIO, trigger mask */
   ph_iomask_t mask;
+  // use ph_job_get_kmask() to interpret
   int kmask;
-
+  // Hashed over the scheduler threads; two jobs with
+  // the same emitter hash will run serially wrt. each other
+  uint32_t emitter_affinity;
+  // For nbio, the socket we're bound to for IO events
   ph_socket_t fd;
-  struct timeval   timeout;
+  // Holds timeout state
   struct ph_timerwheel_timer timer;
-
+  // When targeting a thread pool, which pool
   ph_thread_pool_t *pool;
-
+  // for SMR
   ck_epoch_entry_t epoch_entry;
   struct ph_job_def *def;
 };
@@ -186,7 +195,8 @@ ph_result_t ph_job_set_pool_immediate(ph_job_t *job,
  * to maintain and enforce), but there is a theoretical upper bound
  * of MAX(4, ph_power_2(max_queue_len)) * 64 jobs that can be "queued",
  * assuming that all 63 preferred threads and all the non-preferred
- * threads are busy saturating the pool.
+ * threads are busy saturating the pool.  On 32-bit systems, the multiplier
+ * is 32 instead of 64 and the preferred ring count is 31 instead of 63.
  *
  * Note that the actual values used for `max_queue_len` and `num_threads`
  * will be taken from the configuration values `$.threadpool.NAME.queue_len`
@@ -262,6 +272,17 @@ void ph_job_pool_apply_deferred_items(ph_thread_t *me);
  * The actual value used for sched_cores will be taken from
  * the configuration for `$.nbio.sched_cores`, if present,
  * otherwise your sched_cores parameter will be used.
+ *
+ * Other applicable parameters:
+ *
+ * `$.nbio.epoch_interval` specifies how often we'll schedule a
+ * call to ph_thread_epoch_barrier().  The configuration is specified
+ * in milliseconds.  If you enabled Gimli support, libphenom will
+ * update the heartbeat after performing the barrier.  This ensures
+ * that all worker threads are healthy and making progress.
+ * The default value for this `5000` milliseconds; it should be
+ * more frequent than your Gimli watchdog interval.  You may disable
+ * barrier and heartbeat by setting this option to `0`.
  */
 ph_result_t ph_nbio_init(uint32_t sched_cores);
 
@@ -275,6 +296,52 @@ static inline bool ph_job_have_deferred_items(ph_thread_t *me)
   return PH_STAILQ_FIRST(&me->pending_nbio) ||
          PH_STAILQ_FIRST(&me->pending_pool);
 }
+
+#ifdef PHENOM_IMPL
+#include "phenom/timerwheel.h"
+#include "phenom/counter.h"
+#ifdef HAVE_KQUEUE
+struct ph_nbio_kq_set {
+  int size;
+  int used;
+  struct kevent *events;
+  struct kevent base[16];
+};
+#endif
+struct ph_nbio_emitter {
+  ph_timerwheel_t wheel;
+  ph_job_t timer_job;
+  uint32_t emitter_id;
+  int io_fd, timer_fd;
+#ifdef HAVE_PORT_CREATE
+  timer_t port_timer;
+#endif
+  ph_thread_t *thread;
+  ph_counter_block_t *cblock;
+#ifdef HAVE_KQUEUE
+  struct ph_nbio_kq_set kqset;
+#endif
+};
+
+#define SLOT_DISP 0
+#define SLOT_TIMER_TICK 1
+#define SLOT_BUSY 2
+// We use 100ms resolution
+#define WHEEL_INTERVAL_MS 100
+
+void ph_nbio_emitter_init(struct ph_nbio_emitter *emitter);
+ph_result_t ph_nbio_emitter_apply_io_mask(struct ph_nbio_emitter *emitter,
+    ph_job_t *job, ph_iomask_t mask);
+void ph_nbio_emitter_run(struct ph_nbio_emitter *emitter, ph_thread_t *me);
+
+void ph_nbio_emitter_timer_tick(struct ph_nbio_emitter *emitter);
+void ph_nbio_emitter_dispatch_immediate(struct ph_nbio_emitter *emitter,
+    ph_job_t *job, ph_iomask_t why);
+
+extern int _ph_run_loop;
+
+#endif
+
 
 #ifdef __cplusplus
 }
